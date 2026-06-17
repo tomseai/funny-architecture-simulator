@@ -104,6 +104,7 @@
   .sentence{margin-top:16px;border-left:3px solid var(--border2);padding:6px 14px;font-size:15px;line-height:1.6}
   .wild{margin-top:20px}
   .wild .row{display:flex;flex-wrap:wrap;gap:8px}
+  .wild .row[hidden]{display:none}
   .wc-note{font-size:12px;color:var(--text3);margin-top:9px;min-height:18px}
   details{margin-top:22px}
   summary{cursor:pointer;font-size:13px;color:var(--text2)}
@@ -185,7 +186,7 @@
 
       <div class="wild">
         <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Throw a wildcard — a random shock nudges several forces at once and rerates everything</div>
-        <div class="row"><button id="wc-random" type="button">Throw a wildcard</button><button id="wc-toggle" type="button">Show deck</button></div>
+        <div class="row"><button id="wc-random" type="button">Throw a wildcard</button><button id="wc-toggle" type="button" aria-controls="wc" aria-expanded="false">Show deck</button></div>
         <div class="row" id="wc" hidden style="margin-top:8px"></div>
         <div id="wc-note" class="wc-note" aria-live="polite"></div>
       </div>
@@ -563,6 +564,7 @@ leverage bar      = active leverage, not importance: current exposure × local
   document.getElementById('wc-toggle').addEventListener('click',function(){
     var deck=document.getElementById('wc');deck.hidden=!deck.hidden;
     this.textContent=deck.hidden?'Show deck':'Hide deck';
+    this.setAttribute('aria-expanded',deck.hidden?'false':'true');
   });
 
   var trustToggle=document.getElementById('trust-toggle');

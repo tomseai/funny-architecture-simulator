@@ -131,6 +131,7 @@
     <button data-preset="greenfield">Greenfield startup</button>
     <button data-preset="regulated">Regulated enterprise</button>
     <button data-preset="internal">Internal tool</button>
+    <button data-preset="legacy">Legacy monolith under load</button>
     <span class="sp"></span>
     <button id="copy">Copy shareable link</button>
     <span id="toast" class="toast" aria-live="polite">link copied</span>
@@ -140,7 +141,7 @@
   <div class="grid">
     <div>
       <div class="group-h">The forces</div>
-      <div class="hint">The thin bar under each slider = active leverage: this force's current exposure × local sensitivity. It is not importance; a low bar can still hide a meaningful first nudge. Drag one and watch the others change — that interaction is what complexity <em>is</em>.</div>
+      <div class="hint">The thin bar under each slider = local sensitivity: how much the whole picture would shift if you nudged this force right now. It is not importance — a flat bar means low leverage <em>here</em>, not never. Drag one and watch the others change — that interaction is what complexity <em>is</em>.</div>
       <div id="forces"></div>
       <div class="group-h" style="margin-top:18px">Where you're standing — Grady's axes</div>
       <div class="hint">These don't move your dot in the field — they reshape what your position <em>means</em>: how much a machine can be trusted, and how much the system costs to run.</div>
@@ -151,14 +152,15 @@
       <div class="panels">
         <div>
           <p class="panel-t">The field</p>
-          <p class="panel-s">Where the forces place you. The map moves, not just the dot.</p>
+          <p class="panel-s">Where the forces place you. The map moves, not just the dot. Wildcards leave a breadcrumb trail — the story of how you got here.</p>
           <div id="field"></div>
           <div id="dp" class="dp"></div>
           <button id="trust-toggle" class="viewtoggle" type="button" aria-pressed="false">Tint field by agent trust</button>
+          <button id="pin-toggle" class="viewtoggle" type="button" aria-pressed="false" title="Freeze the current configuration as a ghost dot, then move the sliders — the delta panel shows what your argument is actually about.">Pin this configuration</button>
         </div>
         <div>
           <p class="panel-t">Grady's corner — can a machine be trusted here?</p>
-          <p class="panel-s">Green where a machine can be trusted (well-trodden, cheap to be wrong); red in the stacks (novel, expensive). This is a slice through the current structural novelty. The trap: the agent sounds just as sure in the red — its fluency stays high exactly where your trust should drop.</p>
+          <p class="panel-s">Green where a machine can be trusted; red in the stacks. High stakes alone dim trust a little — routine work survives them, with review. It collapses where stakes and novelty <em>combine</em>. The trap: the agent sounds just as sure in the red — its fluency stays high exactly where your trust should drop.</p>
           <div id="grady"></div>
         </div>
       </div>
@@ -170,6 +172,7 @@
         </div>
         <div class="meterbar"><div id="fs-bar"></div></div>
         <div id="thresh" class="thr"></div>
+        <button id="fs-mode" class="viewtoggle" type="button" aria-pressed="false" title="Real systems degrade steeply but continuously. Cliff mode is the dramatic lie; smooth mode is the honest slope. Compare them — that difference is itself a lesson about models.">Smooth the cliff</button>
       </div>
 
       <div class="meters">
@@ -179,6 +182,8 @@
       </div>
 
       <div id="why" class="why" aria-live="polite"></div>
+
+      <div id="cmp" class="why"></div>
 
       <div id="bill" class="bill"></div>
 
@@ -195,17 +200,27 @@
 
   <details>
     <summary>Show the toy model — inspect it, distrust it</summary>
-<pre>boundaryCost        = (async + state + 0.5) × (1.5 − opMaturity)
+<pre>boundaryCost        = (async + state + 0.5 + 0.4×deploymentScale) × (1.5 − opMaturity)
+                      // scale prices every seam: rollout coordination, config drift
 stayingTogetherCost = changeRate × coupling × (0.5 + complexity)
-failureSurface      = if (async&gt;0.6 && state&gt;0.6 && opMaturity&lt;0.4)
+failureSurface      cliff mode (default):
+                      if (async&gt;0.6 && state&gt;0.6 && opMaturity&lt;0.4)
                           → high plateau   (this is the snap)
                       else → low, gentle
+                    smooth mode:
+                      gentle + gate × (plateau − gentle)
+                      gate = σ((async−0.6)/0.05) × σ((state−0.6)/0.05)
+                           × σ((0.4−opMaturity)/0.05)
+                      // same forces, same steepness — but no magic number where
+                      // 0.59 and 0.61 are different worlds. The cliff is the
+                      // dramatic lie; the sigmoid is closer to how systems degrade.
 decisionPressure    = (blastRadius + irreversibility) / 2
                       // low → cheap &amp; reversible → delay; high → decide deliberately
 
 structuralNovelty = 0.45×coordinationNovelty + 0.30×complexity + 0.25×(1−familiarity)
-agentTrust        = familiarity × (1 − blastRadius) × (1 − structuralNovelty)
-                    // green where it's well-trodden & cheap to be wrong
+agentTrust        = familiarity × (1 − 0.3×blastRadius − 0.6×blastRadius×structuralNovelty)
+                    // stakes alone only dim trust; stakes × novelty collapse it.
+                    // routine work in a high-stakes domain stays workable — with review.
 observabilityNeed = async × (0.5 + 0.5×state) × (0.5 + 0.3×coupling + 0.2×deploymentScale)
                     // deployment scale buys its own observability bill
 observabilityGap  = observabilityNeed − opMaturity     // red when the team can't pay it
@@ -220,10 +235,14 @@ safetyPenalty     = 0.18×(1−opMaturity)×async + 0.12×blastRadius×state
 field x = stayingTogetherCost      field y = boundaryCost
 region  = sign(x − y − safetyPenalty); not-ripe band width ∝ (1 − decisionPressure)
 so opMaturity & blastRadius move the region lines, not just the dot.
+wildcards drop a breadcrumb where you stood — the trail is the story, not the dot.
+pinning freezes a ghost dot; the delta panel compares pinned vs now. Note the
+ghost sits on the *live* map — its own world bent the region lines differently.
 
-leverage bar      = active leverage, not importance: current exposure × local
-                    sensitivity, capped to a stable visual scale. Low when a force
-                    is almost absent; a first nudge can still matter.</pre>
+leverage bar      = local sensitivity, not importance: a finite-difference gradient
+                    of the whole output vector for a small nudge of this force,
+                    capped to a stable visual scale. Flat means nudging it changes
+                    little from *here* — it says nothing about elsewhere.</pre>
   </details>
   <div id="infopop" role="tooltip" hidden></div>
 </div>
@@ -242,7 +261,7 @@ leverage bar      = active leverage, not importance: current exposure × local
   ];
   var grady=[
     {k:'familiarity',label:'Familiarity',lo:'never been built',hi:'built ten thousand times',info:'How much prior art exists. Raises agent trust and lowers structural novelty.'},
-    {k:'deploymentScale',label:'Deployment scale',lo:'one box / few users',hi:'many regions / traffic',info:'Traffic, regions, instances. Mostly raises observability need — it is not the same as architectural novelty.'},
+    {k:'deploymentScale',label:'Deployment scale',lo:'one box / few users',hi:'many regions / traffic',info:'Traffic, regions, instances. Raises observability need and makes every boundary pricier — rollout coordination and config drift are part of the seam. Not the same as architectural novelty.'},
     {k:'coordinationNovelty',label:'Coordination novelty',lo:'known app shape',hi:'novel coordination',info:'How unknown the structure is. Lowers agent trust and raises cognitive load; separate from traffic scale.'}
   ];
   var all=forces.concat(grady);
@@ -252,7 +271,8 @@ leverage bar      = active leverage, not importance: current exposure × local
   var presets={
     greenfield:{complexity:.4,state:.3,async:.3,changeRate:.8,coupling:.3,blastRadius:.2,opMaturity:.35,irreversibility:.25,familiarity:.6,deploymentScale:.3,coordinationNovelty:.45},
     regulated:{complexity:.6,state:.8,async:.5,changeRate:.3,coupling:.6,blastRadius:.85,opMaturity:.7,irreversibility:.8,familiarity:.55,deploymentScale:.6,coordinationNovelty:.4},
-    internal:{complexity:.25,state:.3,async:.2,changeRate:.4,coupling:.25,blastRadius:.15,opMaturity:.4,irreversibility:.3,familiarity:.7,deploymentScale:.15,coordinationNovelty:.2}
+    internal:{complexity:.25,state:.3,async:.2,changeRate:.4,coupling:.25,blastRadius:.15,opMaturity:.4,irreversibility:.3,familiarity:.7,deploymentScale:.15,coordinationNovelty:.2},
+    legacy:{complexity:.65,state:.7,async:.25,changeRate:.55,coupling:.85,blastRadius:.55,opMaturity:.45,irreversibility:.7,familiarity:.7,deploymentScale:.55,coordinationNovelty:.25}
   };
   var cards=[
     {n:'Compliance lands',fx:{state:.25,irreversibility:.3,blastRadius:.3},note:'state ↑ · irreversibility ↑ · cost-of-wrong ↑'},
@@ -264,6 +284,9 @@ leverage bar      = active leverage, not importance: current exposure × local
   ];
   var S=Object.assign({},defaults);
   var trustOverlay=false;
+  var smoothMode=false;
+  var trail=[];
+  var pinned=null;
   var motionOK=(typeof matchMedia!=='undefined')&&matchMedia('(prefers-reduced-motion: no-preference)').matches;
   var prevDot=null,prevPlateau=false;
   var hashKey={complexity:'c',state:'st',async:'as',changeRate:'cr',coupling:'cp',blastRadius:'br',opMaturity:'om',irreversibility:'ir',familiarity:'fm',deploymentScale:'ds',coordinationNovelty:'cn'};
@@ -275,12 +298,16 @@ leverage bar      = active leverage, not importance: current exposure × local
     });
   }
 
+  function sig(x){return 1/(1+Math.exp(-x));}
   function compute(s){
-    var boundaryCost=(s.async+s.state+0.5)*(1.5-s.opMaturity);
+    var boundaryCost=(s.async+s.state+0.5+0.4*s.deploymentScale)*(1.5-s.opMaturity);
     var stayingTogetherCost=s.changeRate*s.coupling*(0.5+s.complexity);
-    var plateauOn=s.async>0.6&&s.state>0.6&&s.opMaturity<0.4;
-    var gentle=0.25*Math.max(s.async,s.state);
-    var failureSurface=plateauOn?(0.85+0.12*((s.async+s.state)/2)):gentle;
+    var gentle=(0.25+0.15*s.deploymentScale)*Math.max(s.async,s.state);
+    var plateauVal=0.85+0.12*((s.async+s.state)/2);
+    var snapGate=sig((s.async-0.6)/0.05)*sig((s.state-0.6)/0.05)*sig((0.4-s.opMaturity)/0.05);
+    var hardOn=s.async>0.6&&s.state>0.6&&s.opMaturity<0.4;
+    var plateauOn=smoothMode?snapGate>=0.5:hardOn;
+    var failureSurface=smoothMode?(gentle+snapGate*(plateauVal-gentle)):(hardOn?plateauVal:gentle);
     var observabilityNeed=s.async*(0.5+0.5*s.state)*(0.5+0.3*s.coupling+0.2*s.deploymentScale);
     var observabilityGap=observabilityNeed-s.opMaturity;
     var asyncKnee=s.async>0.5?(0.5+(s.async-0.5)):(s.async*0.3);
@@ -288,13 +315,13 @@ leverage bar      = active leverage, not importance: current exposure × local
     var cognitiveLoad=clamp((s.coupling+0.25*s.coordinationNovelty)*(0.4+0.6*s.async)*(0.5+0.5*s.state));
     var decisionPressure=(s.blastRadius+s.irreversibility)/2;
     var structuralNovelty=clamp(0.45*s.coordinationNovelty+0.30*s.complexity+0.25*(1-s.familiarity));
-    var agentTrust=clamp(s.familiarity*(1-s.blastRadius)*(1-structuralNovelty));
+    var agentTrust=clamp(s.familiarity*(1-0.3*s.blastRadius-0.6*s.blastRadius*structuralNovelty));
     var safetyPenalty=clamp(0.18*(1-s.opMaturity)*s.async+0.12*s.blastRadius*s.state+0.20*Math.max(0,observabilityGap)+0.10*failureSurface,0,0.7);
     var nx=clamp(stayingTogetherCost/1.5);
-    var ny=clamp((boundaryCost-0.25)/3.5);
+    var ny=clamp((boundaryCost-0.25)/3.9);
     var hw=(1-decisionPressure)*0.45, diff=nx-ny-safetyPenalty;
     var region=Math.abs(diff)<hw?'notripe':(diff>0?'boundary':'keep');
-    return {boundaryCost:boundaryCost,stayingTogetherCost:stayingTogetherCost,plateauOn:plateauOn,
+    return {boundaryCost:boundaryCost,stayingTogetherCost:stayingTogetherCost,plateauOn:plateauOn,snapGate:snapGate,
       failureSurface:clamp(failureSurface),observabilityNeed:observabilityNeed,observabilityGap:observabilityGap,debuggingPain:debuggingPain,
       cognitiveLoad:cognitiveLoad,decisionPressure:decisionPressure,structuralNovelty:structuralNovelty,agentTrust:agentTrust,
       nx:nx,ny:ny,region:region,safetyPenalty:safetyPenalty};
@@ -305,11 +332,6 @@ leverage bar      = active leverage, not importance: current exposure × local
     return [m.nx,m.ny,m.safetyPenalty,notRipeWidth,m.decisionPressure,m.failureSurface,
       m.observabilityNeed,0.5*m.observabilityGap,m.debuggingPain,m.cognitiveLoad,m.agentTrust];
   }
-  function leverageExposure(k){
-    var v=S[k];
-    if(k==='opMaturity'||k==='familiarity') return 0.35+0.65*Math.max(v,1-v);
-    return 0.10+0.90*v;
-  }
   function leverage(){
     var eps=0.04,out={},scale=1.5;
     all.forEach(function(f){
@@ -319,7 +341,7 @@ leverage bar      = active leverage, not importance: current exposure × local
       var a=vecOf(compute(sLo)),b=vecOf(compute(sHi)),d=0;
       for(var i=0;i<a.length;i++){var t=b[i]-a[i];d+=t*t;}
       d=span>0?Math.sqrt(d)/span:0;
-      out[f.k]=clamp((d*leverageExposure(f.k))/scale)*100;
+      out[f.k]=clamp(d/scale)*100;
     });
     return out;
   }
@@ -344,13 +366,33 @@ leverage bar      = active leverage, not importance: current exposure × local
     var bnd=[[Ax,Ay],[pad+size,pad+size],[Bx,By]].map(function(p){return p[0].toFixed(1)+','+p[1].toFixed(1);}).join(' ');
     var rc={keep:'#378ADD',boundary:'#1D9E75',notripe:'#EF9F27'}[m.region];
     var cy=pad+size/2;
-    return '<svg viewBox="0 0 288 288" width="100%" role="img" aria-label="Decision field with a dot showing where the current forces place you and a not-ripe band where the honest move is to wait.">'
+    var trailSvg='';
+    if(trail.length){
+      var tp=trail.map(function(p){return [pad+p.x*size,pad+(1-p.y)*size];});
+      tp.push([parseFloat(px),parseFloat(py)]);
+      trailSvg='<polyline points="'+tp.map(function(p){return p[0].toFixed(1)+','+p[1].toFixed(1);}).join(' ')+'" fill="none" stroke="var(--text3)" stroke-width="1" stroke-dasharray="2 3" opacity="0.7"/>';
+      trail.forEach(function(p,i){
+        var o=(0.25+0.5*(i+1)/trail.length).toFixed(2);
+        trailSvg+='<circle cx="'+(pad+p.x*size).toFixed(1)+'" cy="'+(pad+(1-p.y)*size).toFixed(1)+'" r="2.5" fill="var(--text3)" opacity="'+o+'"/>';
+      });
+    }
+    var ghostSvg='';
+    if(pinned){
+      var pm=compute(pinned.s);
+      var gx=(pad+pm.nx*size).toFixed(1),gy=(pad+(1-pm.ny)*size).toFixed(1);
+      ghostSvg='<circle cx="'+gx+'" cy="'+gy+'" r="9" fill="none" stroke="var(--text3)" stroke-width="1.5" stroke-dasharray="3 2"/>'
+        +'<circle cx="'+gx+'" cy="'+gy+'" r="3" fill="var(--text3)" opacity="0.6"/>'
+        +'<text x="'+gx+'" y="'+(parseFloat(gy)-13).toFixed(1)+'" text-anchor="middle" font-size="9" fill="var(--text3)">pinned</text>';
+    }
+    return '<svg viewBox="0 0 288 288" width="100%" role="img" aria-label="Decision field with a dot showing where the current forces place you, a not-ripe band where the honest move is to wait, and a breadcrumb trail of where wildcards moved you.">'
       +'<defs><clipPath id="fclip"><rect x="'+pad+'" y="'+pad+'" width="'+size+'" height="'+size+'"/></clipPath></defs>'
       +'<g clip-path="url(#fclip)">'
       +'<polygon points="'+keep+'" fill="#378ADD" fill-opacity="0.13"/>'
       +'<polygon points="'+bnd+'" fill="#1D9E75" fill-opacity="0.13"/>'
       +'<polygon points="'+band+'" fill="#EF9F27" fill-opacity="0.24"/>'
       +'<line x1="'+Ax+'" y1="'+Ay+'" x2="'+Bx+'" y2="'+By+'" stroke="var(--border2)" stroke-width="1" stroke-dasharray="3 3"/>'
+      +trailSvg
+      +ghostSvg
       +'</g>'
       +(trustOverlay?('<rect x="'+pad+'" y="'+pad+'" width="'+size+'" height="'+size+'" fill="'+trustColor(m.agentTrust)+'" fill-opacity="0.22"/><text x="'+(pad+size/2)+'" y="'+(pad+13)+'" text-anchor="middle" font-size="10" fill="var(--text2)">agent trust '+Math.round(m.agentTrust*100)+'</text>'):'')
       +'<rect x="'+pad+'" y="'+pad+'" width="'+size+'" height="'+size+'" fill="none" stroke="var(--border2)" stroke-width="1"/>'
@@ -369,7 +411,7 @@ leverage bar      = active leverage, not importance: current exposure × local
     for(var i=0;i<N;i++){for(var j=0;j<N;j++){
       var fam=(i+0.5)/N, blast=1-(j+0.5)/N;
       var sn=clamp(0.45*S.coordinationNovelty+0.30*S.complexity+0.25*(1-fam));
-      var t=clamp(fam*(1-blast)*(1-sn));
+      var t=clamp(fam*(1-0.3*blast-0.6*blast*sn));
       svg+='<rect x="'+(pad+i*cell).toFixed(1)+'" y="'+(pad+j*cell).toFixed(1)+'" width="'+(cell+0.5).toFixed(1)+'" height="'+(cell+0.5).toFixed(1)+'" fill="'+trustColor(t)+'" fill-opacity="0.62"/>';
     }}
     var px=(pad+S.familiarity*size).toFixed(1),py=(pad+(1-S.blastRadius)*size).toFixed(1);
@@ -423,7 +465,7 @@ leverage bar      = active leverage, not importance: current exposure × local
   }
 
   function syncURL(){
-    var h='#'+order.map(function(k){return hashKey[k]+'='+Math.round(S[k]*100);}).join('&');
+    var h='#'+order.map(function(k){return hashKey[k]+'='+Math.round(S[k]*100);}).join('&')+(smoothMode?'&sm=1':'');
     try{history.replaceState(null,'',h);}catch(e){location.hash=h;}
   }
 
@@ -436,8 +478,9 @@ leverage bar      = active leverage, not importance: current exposure × local
     return '';
   }
   var prevM=null,prevVals=null;
+  function deltaHTML(v){var r=Math.round(v);return r===0?'<span class="no">unchanged</span>':'<span class="'+(r>0?'up':'dn')+'">'+(r>0?'+':'')+r+'</span>';}
   function whyHTML(p,m,action){
-    function d(v){var r=Math.round(v);return r===0?'<span class="no">unchanged</span>':'<span class="'+(r>0?'up':'dn')+'">'+(r>0?'+':'')+r+'</span>';}
+    var d=deltaHTML;
     var fs=(p.plateauOn!==m.plateauOn)?(m.plateauOn?'<span class="up">snapped onto plateau</span>':'<span class="dn">released from plateau</span>'):d((m.failureSurface-p.failureSurface)*100);
     var rows=[
       ['Field x',d((m.nx-p.nx)*100)],
@@ -459,15 +502,37 @@ leverage bar      = active leverage, not importance: current exposure × local
     if(prevM)document.getElementById('why').innerHTML=whyHTML(prevM,m,action);
     prevM=m;prevVals=Object.assign({},S);
   }
+  function cmpHTML(pm,m){
+    var d=deltaHTML;
+    var rn={keep:'keep together',boundary:'draw a boundary',notripe:'not ripe'};
+    var region=pm.region===m.region
+      ?'<span class="no">'+rn[m.region]+' (both)</span>'
+      :'<span>'+rn[pm.region]+' → <strong>'+rn[m.region]+'</strong></span>';
+    var rows=[
+      ['Failure surface',d((m.failureSurface-pm.failureSurface)*100)],
+      ['Safety penalty',d((m.safetyPenalty-pm.safetyPenalty)*100)],
+      ['Decision pressure',d((m.decisionPressure-pm.decisionPressure)*100)],
+      ['Observability gap',d((m.observabilityGap-pm.observabilityGap)*100)],
+      ['Debugging pain',d((m.debuggingPain-pm.debuggingPain)*100)],
+      ['Cognitive load',d((m.cognitiveLoad-pm.cognitiveLoad)*100)],
+      ['Agent trust',d((m.agentTrust-pm.agentTrust)*100)]
+    ];
+    return '<div class="h">Pinned vs now — two worlds, one argument</div>'
+      +'<div class="d"><span>Region</span>'+region+'</div>'
+      +rows.map(function(r){return '<div class="d"><span>'+esc(r[0])+'</span>'+r[1]+'</div>';}).join('')
+      +'<div style="color:var(--text3);margin-top:6px">The map is drawn for the live configuration — the pinned world bent the region lines differently. The toy still won’t pick a winner; these deltas are what your argument is actually about.</div>';
+  }
   function dpNote(m){
     var p=m.decisionPressure;
     var lvl=p<0.4?['low','dp-lo','cheap and reversible, so delay and stay flexible']:(p>0.6?['high','dp-hi','costly and hard to undo — decide deliberately']:['medium','dp-md','getting harder to walk back']);
     return 'Decision pressure: <span class="'+lvl[1]+'">'+lvl[0]+'</span> — '+lvl[2];
   }
-  function threshHTML(s){
+  function threshHTML(s,m){
     function c(lbl,ok){return '<span class="'+(ok?'thr-ok':'thr-no')+'">'+lbl+' '+(ok?'✓':'✗')+'</span>';}
     var a=s.async>0.6,st=s.state>0.6,o=s.opMaturity<0.4,n=(a?1:0)+(st?1:0)+(o?1:0);
-    var lead=n===3?'snapped — all three hold:':(n===2?'one condition away from snap:':'gentle — needs all three:');
+    var lead;
+    if(smoothMode) lead='smooth mode — snap gate at '+Math.round(m.snapGate*100)+'%, same three forces:';
+    else lead=n===3?'snapped — all three hold:':(n===2?'one condition away from snap:':'gentle — needs all three:');
     return '<span class="thr-lead">'+lead+'</span> '+c('async&gt;0.6',a)+' · '+c('state&gt;0.6',st)+' · '+c('opMaturity&lt;0.4',o);
   }
   function billHTML(s){
@@ -516,13 +581,14 @@ leverage bar      = active leverage, not importance: current exposure × local
     setMeter('dbg',m.debuggingPain,word(m.debuggingPain)+(m.debuggingPain>0.6?' — a transcript, not a stack trace':''));
     setMeter('cog',m.cognitiveLoad,word(m.cognitiveLoad)+' — held in your head per safe change');
     var fb=document.getElementById('fs-bar');fb.style.width=Math.round(m.failureSurface*100)+'%';fb.style.background=col(m.failureSurface);
-    document.getElementById('fs-label').textContent=m.plateauOn?'snapped onto the plateau':'gentle';
+    document.getElementById('fs-label').textContent=m.plateauOn?(smoothMode?'over the crest':'snapped onto the plateau'):(smoothMode&&m.snapGate>0.05?'climbing the slope':'gentle');
     if(motionOK&&!prevPlateau&&m.plateauOn){pulse('field','snap');pulse('fs-block','snap-shake');}
     prevPlateau=m.plateauOn;
-    document.getElementById('thresh').innerHTML=threshHTML(S);
+    document.getElementById('thresh').innerHTML=threshHTML(S,m);
     document.getElementById('dp').innerHTML=dpNote(m);
     document.getElementById('bill').innerHTML=billHTML(S);
     document.getElementById('sentence').textContent=sentence(m);
+    document.getElementById('cmp').innerHTML=pinned?cmpHTML(compute(pinned.s),m):'';
   }
 
   function sliderHTML(f){
@@ -546,6 +612,8 @@ leverage bar      = active leverage, not importance: current exposure × local
 
   function applyCard(c){
     var before=compute(S);
+    trail.push({x:before.nx,y:before.ny});
+    if(trail.length>8)trail.shift();
     for(var k in c.fx){S[k]=clamp(S[k]+c.fx[k]);}
     var after=compute(S);
     render();showWhy('“'+c.n+'” — several forces nudged');syncURL();
@@ -565,6 +633,28 @@ leverage bar      = active leverage, not importance: current exposure × local
     var deck=document.getElementById('wc');deck.hidden=!deck.hidden;
     this.textContent=deck.hidden?'Show deck':'Hide deck';
     this.setAttribute('aria-expanded',deck.hidden?'false':'true');
+  });
+
+  var fsMode=document.getElementById('fs-mode');
+  function setFsModeBtn(){
+    fsMode.classList[smoothMode?'add':'remove']('on');
+    fsMode.setAttribute('aria-pressed',smoothMode?'true':'false');
+    fsMode.textContent=smoothMode?'Smooth mode: on — restore the cliff':'Smooth the cliff';
+  }
+  fsMode.addEventListener('click',function(){
+    smoothMode=!smoothMode;
+    setFsModeBtn();
+    render();syncURL();
+    showWhy(smoothMode?'Smoothed the cliff — same forces, honest slope':'Restored the cliff — dramatic, and slightly a lie');
+  });
+
+  var pinToggle=document.getElementById('pin-toggle');
+  pinToggle.addEventListener('click',function(){
+    pinned=pinned?null:{s:Object.assign({},S)};
+    pinToggle.classList[pinned?'add':'remove']('on');
+    pinToggle.setAttribute('aria-pressed',pinned?'true':'false');
+    pinToggle.textContent=pinned?'Unpin — ghost dot is the pinned world':'Pin this configuration';
+    render();
   });
 
   var trustToggle=document.getElementById('trust-toggle');
@@ -593,9 +683,9 @@ leverage bar      = active leverage, not importance: current exposure × local
   document.addEventListener('keydown',function(e){if(e.key==='Escape')closeInfo();});
 
   Array.prototype.forEach.call(document.querySelectorAll('[data-preset]'),function(b){
-    b.addEventListener('click',function(){var p=b.getAttribute('data-preset');S=Object.assign({},presets[p]);render();showWhy('Preset: '+p+' — several forces set');syncURL();document.getElementById('wc-note').textContent='';});
+    b.addEventListener('click',function(){var p=b.getAttribute('data-preset');S=Object.assign({},presets[p]);trail=[];render();showWhy('Preset: '+p+' — several forces set');syncURL();document.getElementById('wc-note').textContent='';});
   });
-  document.getElementById('reset').addEventListener('click',function(){S=Object.assign({},defaults);render();syncURL();document.getElementById('why').innerHTML='';prevM=compute(S);prevVals=Object.assign({},S);document.getElementById('wc-note').textContent='';});
+  document.getElementById('reset').addEventListener('click',function(){S=Object.assign({},defaults);trail=[];render();syncURL();document.getElementById('why').innerHTML='';prevM=compute(S);prevVals=Object.assign({},S);document.getElementById('wc-note').textContent='';});
   document.getElementById('copy').addEventListener('click',function(){
     var t=document.getElementById('toast');
     function show(msg,c){t.textContent=msg;t.style.color=c;t.classList.add('show');setTimeout(function(){t.classList.remove('show');},1600);}
@@ -634,7 +724,9 @@ leverage bar      = active leverage, not importance: current exposure × local
     var h=location.hash.replace(/^#/,'');if(!h)return;
     if(h.indexOf('=')>-1){
       var rev={};for(var hk in hashKey)rev[hashKey[hk]]=hk;
-      h.split('&').forEach(function(p){var kv=p.split('=');var key=rev[kv[0]];if(key){var n=parseInt(kv[1],10);if(!isNaN(n))S[key]=clamp(n/100);}});
+      h.split('&').forEach(function(p){var kv=p.split('=');
+        if(kv[0]==='sm'){smoothMode=kv[1]==='1';return;}
+        var key=rev[kv[0]];if(key){var n=parseInt(kv[1],10);if(!isNaN(n))S[key]=clamp(n/100);}});
     }else{
       var parts=h.split('-');if(parts.length!==order.length)return;
       var ok=true,tmp={};
@@ -643,6 +735,7 @@ leverage bar      = active leverage, not importance: current exposure × local
     }
   })();
 
+  setFsModeBtn();
   render();syncURL();
   prevM=compute(S);prevVals=Object.assign({},S);
 })();
